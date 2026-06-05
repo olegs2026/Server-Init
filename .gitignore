@@ -1,18 +1,91 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# ─────────────────────────────────────────────────────────────
+#  server-init — .gitignore
+#  Порядок важен: сначала самое опасное (секреты), потом мусор.
+# ─────────────────────────────────────────────────────────────
 
-# Other files and folders
-.settings/
+# ===== 🔐 СЕКРЕТЫ — НИКОГДА не коммитим =====
+# Заполненный конфиг off-site бэкапа (FTP-логин/пароль, парольная фраза GPG)
+backup-offsite.conf
+*offsite*.conf
+# fail2ban: твои доверенные адреса и локальные джейлы
+ignoreip.local
+jail.local
+fail2ban.local
+# Переменные окружения и любые «реальные» конфиги
+.env
+.env.*
+*.local.conf
+*.conf.real
+secrets/
+secret*
+*.secret
+*credential*
+*.cred
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# ===== 🔑 Ключи и сертификаты =====
+*.key
+*.pem
+*.ppk
+*.p12
+*.pfx
+*.gpg
+*.asc
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*_rsa
+*_ed25519
+authorized_keys
+known_hosts
+# (публичные .pub коммитить не страшно, но по умолчанию тоже не тащим)
+*.pub
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# ===== 💾 Бэкапы и архивы (их генерят скрипты) =====
+*.bak
+*.orig
+*.old
+*.tmp
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.zip
+backup*/
+ssh-hardening-backup-*/
+
+# ===== 📜 Логи =====
+*.log
+logs/
+fresh-start-*.log
+lynis*.log
+lynis-report.dat
+
+# ===== 🧰 Редакторы =====
+*.swp
+*.swo
+.*.swp
+*~
+.netrwhist
+.vscode/
+.idea/
+*.iml
+
+# ===== 💻 Системный мусор =====
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+# Windows
+Thumbs.db
+ehthumbs.db
+desktop.ini
+# Linux
+.directory
+.Trash-*
+
+# ===== ⚙️ Локальное/временное =====
+scratch/
+tmp/
+*.test.sh
