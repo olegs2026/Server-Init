@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────
+#  server-init — .gitattributes
+# ─────────────────────────────────────────────────────────────
+
+# По умолчанию: git сам нормализует переносы строк в текстовых файлах.
+* text=auto
+
+# Shell-скрипты — ВСЕГДА LF (CRLF ломает bash: "bad interpreter: ...^M")
+# и помечаем как язык Shell для статистики GitHub (Linguist).
+*.sh   text eol=lf linguist-language=Shell
+*.bash text eol=lf linguist-language=Shell
+
+# Linux-конфиги и unit-файлы — тоже только LF.
+*.conf    text eol=lf
+*.service text eol=lf
+*.timer   text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+
+# Markdown — LF, и помечаем как документацию,
+# чтобы README не «съедал» языковую статистику репозитория.
+*.md text eol=lf linguist-documentation
+
+# Бинарники/архивы — не трогать переносы и не диффить как текст.
+*.gz  binary
+*.tgz binary
+*.tar binary
+*.zip binary
+*.gpg binary
+*.png binary
+*.jpg binary
