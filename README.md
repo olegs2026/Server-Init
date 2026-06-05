@@ -27,6 +27,40 @@
 
 ---
 
+## ⬇️ Скачивание
+
+> Замени `<USER>` на свой GitHub-логин, а `server-init` — на имя репозитория.
+> Если ветка по умолчанию не `main`, а `master` — поправь в ссылке.
+
+**Вся пачка одной командой** (без `git`, прямо на сервере):
+
+```bash
+mkdir -p server-init && cd server-init
+curl -fsSL https://github.com/<USER>/server-init/archive/refs/heads/main.tar.gz \
+  | tar -xz --strip-components=1
+chmod +x *.sh
+```
+
+**Через git** (если хочешь историю и обновления):
+
+```bash
+git clone https://github.com/<USER>/server-init.git
+cd server-init
+chmod +x *.sh
+```
+
+**Только скрипты** (без README и прочего):
+
+```bash
+base=https://raw.githubusercontent.com/<USER>/server-init/main
+for f in 00-init.sh 01-init.sh 02-init.sh backup-offsite.sh; do
+  curl -fsSLO "$base/$f"
+done
+chmod +x *.sh
+```
+
+---
+
 ## 🚀 Быстрый старт
 
 ```bash
@@ -174,3 +208,4 @@ git -C /etc log --oneline -5
 Используй и меняй свободно. Идеи и проверка по материалам базы знаний хостинг-провайдера
 (SpaceCore) и рекомендациям аудитора [Lynis](https://cisofy.com/lynis/). Перед применением
 на боевом сервере — прочитай, что делает каждый скрипт. 🚀
+
