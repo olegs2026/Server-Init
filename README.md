@@ -1,90 +1,205 @@
-#!/usr/bin/env bash
-#
-# 02-init.sh — доп. SSH-хардинг по рекомендациям lynis (SSH-7408). Запускать после 00/01.
-#   Применяет: MaxAuthTries=3, MaxSessions=2, X11Forwarding=no, Compression=no,
-#              LogLevel=VERBOSE, TCPKeepAlive=no, ClientAliveInterval/CountMax.
-#   НЕ трогает: AllowTcpForwarding / AllowAgentForwarding — твой проброс портов
-#              в Terminus продолжит работать (по твоему выбору).
-#
-# Идемпотентно. Конфиг проверяется через sshd -t, ssh перезагружается через
-# reload (НЕ restart) — текущая сессия не рвётся.
-#
-set -Eeuo pipefail
+# 🛡️ Server-Init — быстрая и безопасная подготовка сервера Ubuntu
 
-on_error() {
-  local rc=$? line=$1
-  echo >&2
-  echo "############################################################" >&2
-  echo "!! ОШИБКА (код $rc) на строке $line" >&2
-  echo "!! Команда: $BASH_COMMAND" >&2
-  echo "!! Текущая SSH-сессия НЕ закрыта. Бэкап: ${BACKUP_DIR:-?}" >&2
-  echo "############################################################" >&2
-  exit "$rc"
-}
-trap 'on_error $LINENO' ERR
+Набор идемпотентных bash-скриптов, которые превращают свежий VPS/VDS в
+аккуратно защищённый и обслуживаемый сервер: вход только по SSH-ключу,
+нестандартный порт, fail2ban с вечным баном, автообновления, бэкап конфигов,
+аудит безопасности и сетевые твики (BBR).
 
-if [[ $EUID -ne 0 ]]; then
-  echo "Запусти от root:  sudo $0" >&2
-  exit 1
-fi
+Заточено под **Ubuntu 22.04 / 24.04**, проверено на VPS у Hetzner и Contabo.
 
-# Имя файла специально сортируется РАНЬШE 00-hardening.conf:
-# его Match-блок (User rootos) не должен "перехватывать" наши глобальные настройки.
-EXTRA_FILE="/etc/ssh/sshd_config.d/00-extra.conf"
-BACKUP_DIR="/root/ssh-hardening-backup-$(date +%Y%m%d-%H%M%S)"
+> [!WARNING]
+> Скрипты меняют доступ к серверу (SSH-порт, ключи, фаервол).
+> Запускай по порядку, **не закрывай текущую сессию**, пока не убедишься,
+> что новый вход работает. Все скрипты держат запасные пути и делают бэкапы.
 
-echo "==> Бэкап конфигов SSH в $BACKUP_DIR"
-mkdir -p "$BACKUP_DIR"
-cp -a /etc/ssh/sshd_config   "$BACKUP_DIR/" 2>/dev/null || true
-cp -a /etc/ssh/sshd_config.d "$BACKUP_DIR/" 2>/dev/null || true
+---
 
-echo "==> Пишу $EXTRA_FILE"
-cat > "$EXTRA_FILE" <<'EOF'
-# Доп. хардинг SSH по рекомендациям lynis (SSH-7408).
-# Туннели/проброс портов НЕ трогаем: AllowTcpForwarding и AllowAgentForwarding
-# намеренно НЕ заданы здесь (остаются как есть).
-# Файл назван так, чтобы читаться раньше 00-hardening.conf (до его Match-блока).
+## ✨ Кратко
 
-MaxAuthTries 3
-MaxSessions 2
-X11Forwarding no
-Compression no
-LogLevel VERBOSE
-TCPKeepAlive no
-ClientAliveInterval 120
-ClientAliveCountMax 2
+| Скрипт | Назначение | Интерактивный? |
+|--------|------------|----------------|
+| **`00-init.sh`** | SSH hardening: ключ вместо пароля, смена порта, резервная sudo-учётка, закрытие 22 | да |
+| **`01-init.sh`** | Обновление системы, инструменты админа, fail2ban, автообновления, бэкап `/etc`, аудит lynis, BBR | частично |
+| **`02-init.sh`** | Доп. SSH-хардинг по рекомендациям lynis (без поломки туннелей) | нет |
 
-# (по желанию) ограничить КТО заходит по SSH — снижает риск перебора,
-# но при опечатке можно заблокировать себе вход. Раскомментируй ОСОЗНАННО,
-# вписав всех нужных пользователей:
-# AllowUsers root rootos
-EOF
-chmod 644 "$EXTRA_FILE"
+**Порядок запуска:** `00 → 01 → 02`.
 
-echo "==> Проверка синтаксиса sshd -t"
-if ! sshd -t; then
-  echo "ОШИБКА в конфиге — откатываю $EXTRA_FILE" >&2
-  rm -f "$EXTRA_FILE"
-  sshd -t && echo "Откат успешен, конфиг снова валиден." >&2
-  exit 1
-fi
+---
 
-echo "==> Перечитываю конфиг SSH (reload — текущая сессия не рвётся)"
-systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || systemctl restart ssh
+## ⬇️ Скачивание
 
-echo
-echo "############################################################"
-echo "==> Готово. Применён SSH-хардинг:"
-echo "    MaxAuthTries=3, MaxSessions=2, X11Forwarding=no, Compression=no,"
-echo "    LogLevel=VERBOSE, TCPKeepAlive=no, ClientAliveInterval=120, CountMax=2"
-echo "    Туннели (TCP/Agent forwarding) НЕ тронуты."
-echo
-echo "Проверка, что новые значения подхватились:"
-echo "    sshd -T | grep -Ei 'maxauthtries|maxsessions|x11forwarding|loglevel|clientalive|compression|tcpkeepalive'"
-echo
-echo "Пересними оценку безопасности (часть SSH-замечаний уйдёт):"
-echo "    lynis audit system --quick   # смотри 'Hardening index' в конце"
-echo
-echo "ВАЖНО: проверь новый вход ДО закрытия текущей сессии — открой ещё одно"
-echo "подключение в Terminus и убедись, что заходит. (Конфиг валиден, но привычка.)"
-echo "############################################################"
+**Вся пачка одной командой** (без `git`, прямо на сервере):
+
+```bash
+mkdir -p Server-Init && cd Server-Init
+curl -fsSL https://github.com/olegs2026/Server-Init/archive/refs/heads/main.tar.gz \
+  | tar -xz --strip-components=1
+chmod +x *.sh
+```
+
+**Через git** (если хочешь историю и обновления):
+
+```bash
+git clone https://github.com/olegs2026/Server-Init.git
+cd Server-Init
+chmod +x *.sh
+```
+
+**Только скрипты** (без README и прочего):
+
+```bash
+base=https://raw.githubusercontent.com/olegs2026/Server-Init/main
+for f in 00-init.sh 01-init.sh 02-init.sh; do
+  curl -fsSLO "$base/$f"
+done
+chmod +x *.sh
+```
+
+> [!NOTE]
+> Если ветка по умолчанию у репозитория не `main`, а `master` — поправь это
+> слово в ссылках. `curl` и `tar` на Ubuntu есть из коробки.
+
+---
+
+## 🚀 Быстрый старт
+
+```bash
+# 1) SSH hardening (спросит порт, имя учётки и попросит вставить публичный ключ)
+sudo ./00-init.sh
+#    -> открой НОВУЮ сессию на новом порту и убедись, что заходишь, ТОЛЬКО потом
+#       подтверди закрытие порта 22
+
+# 2) лучше под tmux — длинный прогон переживёт обрыв связи
+tmux new -s init
+sudo ./01-init.sh
+
+# 3) добей SSH-рекомендации аудита
+sudo ./02-init.sh
+```
+
+> [!TIP]
+> Публичный ключ удобно сделать прямо в Terminus:
+> **Keychain → New Key (Ed25519) → Generate → Export public key** — и вставить,
+> когда `00-init.sh` попросит. Приватный ключ остаётся в приложении.
+
+---
+
+## 📦 Что делает каждый скрипт
+
+### `00-init.sh` — SSH hardening
+
+- 🔑 Вход `root` — **только по ключу** (`PermitRootLogin prohibit-password`), пароль по SSH запрещён.
+- 🔀 Переносит SSH на новый порт — **спрашивает интерактивно** (Enter = `44422`).
+- 👤 Создаёт **резервную sudo-учётку** — имя спрашивает (Enter = `root777`), кладёт ей тот же ключ, по желанию разрешает ей вход по паролю как запасной канал.
+- 🚪 Убирает порт `22` из конфигурации sshd; в фаерволе закрывает его **после твоего подтверждения**.
+- 🧱 Сам определяет фаервол (`firewalld` / `ufw` / `nftables` / `iptables`) и действует правильным для него способом; новый порт открывает **до** теста, чтобы ты успел проверить вход.
+- 💾 Бэкап старых конфигов в `/root/ssh-hardening-backup-*`, проверка через `sshd -t`, корректная работа с `ssh.socket` (актуально для 24.04).
+- 🎁 В конце — красивая сводка: порт, учётка, фаервол и готовая строка для подключения.
+
+### `01-init.sh` — обслуживание и базовая защита
+
+- ⬆️ `apt update && full-upgrade`, чистка, **автообновления безопасности** (`unattended-upgrades`).
+- 🧰 Инструменты админа: `iperf3, mc, btop, htop, mtr, nmap, tcpdump, iftop, nethogs, jq, ncdu, tmux, rsync, sysstat, iotop` и др.
+- 🚓 **fail2ban**: вечный бан, **3 промаха за 24 часа**, backend `systemd`, авто-выбор `banaction` под фаервол, whitelist = `localhost` + IP сервера + твои адреса из `ignoreip.local`. SSH-порт определяется автоматически.
+- 🗂️ Бэкап конфигов: `etckeeper` (git в `/etc`) + ежедневный архив `/etc` в `/var/backups/config` (с ротацией).
+- 🔍 Аудит **lynis** (разово + еженедельный таймер) и проверка целостности пакетов `debsums`.
+- 🚀 Сеть: **TCP BBR** (`fq` + `bbr`) и IP-форвардинг через `sysctl`-drop-in.
+- 🧯 Рекомендует tmux на старте, ловит ошибки с указанием строки, в конце печатает блок команд для самопроверки.
+
+### `02-init.sh` — доп. SSH-хардинг
+
+Закрывает рекомендации lynis из блока `SSH-7408`, не ломая твои сценарии:
+
+- `MaxAuthTries 3`, `MaxSessions 2`, `X11Forwarding no`, `Compression no`,
+  `LogLevel VERBOSE`, `TCPKeepAlive no`, `ClientAliveInterval 120`, `ClientAliveCountMax 2`.
+- ⚠️ **Не трогает** `AllowTcpForwarding` и `AllowAgentForwarding` — проброс портов / туннели продолжают работать.
+- 📎 Бонус: `ClientAliveInterval` держит NAT-сессию живой → меньше обрывов на мобильных клиентах.
+- Применение через `reload` (текущая сессия не рвётся), с проверкой `sshd -t`.
+
+---
+
+## ✅ После установки (обязательно)
+
+```bash
+# 1) Добавь свой ДОМАШНИЙ IP в whitelist fail2ban, чтобы не забанить себя.
+#    Узнай его с домашней машины:  curl -4 -s ifconfig.me
+echo '<ТВОЙ_IP>' | sudo tee -a /etc/fail2ban/ignoreip.local
+sudo systemctl reload fail2ban
+
+# 2) Если обновилось ядро — перезагрузись, когда удобно
+sudo reboot
+```
+
+> [!IMPORTANT]
+> fail2ban банит **источник** неудачных входов, то есть твой адрес. Поэтому
+> whitelist своего IP — самая важная защита от самоблокировки. Файл
+> `/etc/fail2ban/ignoreip.local` повторные запуски **не перезатирают**.
+
+---
+
+## 🔎 Проверка состояния
+
+```bash
+# SSH слушает новый порт и вход по ключу работает
+sudo sshd -T | grep -Ei 'port|permitrootlogin|passwordauthentication'
+
+# fail2ban жив, jail sshd поднят на нужном порту
+systemctl is-active fail2ban && fail2ban-client status sshd
+
+# таймеры бэкапа конфигов и аудита
+systemctl list-timers --all | grep -E 'config-backup|lynis'
+
+# BBR и форвардинг применились
+sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.ip_forward
+
+# индекс защищённости и замечания lynis
+grep -i hardening /var/log/lynis-report.dat
+grep -E '^(warning|suggestion)' /var/log/lynis-report.dat
+
+# история изменений /etc
+git -C /etc log --oneline -5
+```
+
+---
+
+## 🧯 Откат и восстановление
+
+- **SSH-конфиг:** старые файлы лежат в `/root/ssh-hardening-backup-*`. Восстановить и перезапустить:
+  ```bash
+  sudo cp -a /root/ssh-hardening-backup-*/sshd_config /etc/ssh/sshd_config
+  sudo systemctl restart ssh
+  ```
+- **Конфиги вообще:** `etckeeper` хранит историю `/etc` в git — `cd /etc && sudo git log` / `git diff`.
+- **Разбанить адрес:** `sudo fail2ban-client set sshd unbanip <IP>`.
+- **Аварийный доступ:** если потерял и ключ, и порт — используй веб-консоль/Rescue у провайдера; вход под резервной учёткой (если включал ей пароль) или сброс через консоль.
+
+---
+
+## 🧠 Принципы
+
+- **Идемпотентность** — любой скрипт можно запускать повторно без вреда.
+- **Без обрыва доступа** — `00-init` не закрывает старый порт до твоего подтверждения и не рвёт текущую сессию.
+- **Громкие ошибки** — `set -Eeuo pipefail` + ловушка `ERR` печатает строку и команду, на которой что-то упало.
+- **Безопасные значения по умолчанию**, но всё ключевое — спрашивается или задаётся в конфиге.
+
+---
+
+## 📋 Требования
+
+- Ubuntu 22.04 / 24.04 (в основном Debian-совместимо), `systemd`.
+- Доступ `root` (через `sudo`).
+- Доступ в интернет (для `apt` и lynis).
+
+---
+
+## 🔜 В планах
+
+- Off-site бэкап с шифрованием под разные хранилища: кастомный внешний **FTP/SFTP**, **Яндекс.Диск**, **Dropbox** и т.п. (отдельный скрипт, конфигурируемый под выбранный бэкенд).
+
+---
+
+## 📝 Лицензия и благодарности
+
+Используй и меняй свободно. Идеи и проверка — по материалам баз знаний хостинг-провайдеров
+и рекомендациям аудитора [Lynis](https://cisofy.com/lynis/). Перед применением на боевом
+сервере прочитай, что делает каждый скрипт. 🚀
